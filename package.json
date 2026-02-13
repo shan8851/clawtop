@@ -1,0 +1,41 @@
+{
+  "name": "clawtop",
+  "version": "0.1.0",
+  "description": "Non-interactive one-screen OpenClaw status board",
+  "type": "module",
+  "bin": {
+    "clawtop": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "keywords": [
+    "openclaw",
+    "terminal",
+    "dashboard"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@typescript-eslint/eslint-plugin": "^8.24.0",
+    "@typescript-eslint/parser": "^8.24.0",
+    "@types/node": "^22.13.4",
+    "eslint": "^9.20.1",
+    "globals": "^15.15.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.8"
+  }
+}
