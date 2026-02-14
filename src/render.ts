@@ -1,6 +1,6 @@
 import { BoardSnapshot, BoardWarning, Metric, StatusLevel } from "./types.js";
 
-interface RenderOptions {
+export interface RenderOptions {
   readonly colorEnabled: boolean;
   readonly columns: number;
   readonly compact: boolean;
@@ -11,17 +11,21 @@ type CardTone = "neutral" | "green" | "amber" | "red";
 interface AnsiPalette {
   readonly amber: string;
   readonly border: string;
+  readonly brand: string;
   readonly dim: string;
   readonly green: string;
   readonly red: string;
   readonly reset: string;
 }
 
+const minimumViewportWidth = 40;
+
 const createAnsiPalette = (colorEnabled: boolean): AnsiPalette => (
   colorEnabled
     ? {
       amber: "\u001b[38;5;221m",
       border: "\u001b[38;5;240m",
+      brand: "\u001b[38;5;81m",
       dim: "\u001b[38;5;245m",
       green: "\u001b[38;5;114m",
       red: "\u001b[38;5;203m",
@@ -30,6 +34,7 @@ const createAnsiPalette = (colorEnabled: boolean): AnsiPalette => (
     : {
       amber: "",
       border: "",
+      brand: "",
       dim: "",
       green: "",
       red: "",
@@ -39,6 +44,8 @@ const createAnsiPalette = (colorEnabled: boolean): AnsiPalette => (
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
+
+const normalizeColumns = (columns: number): number => Math.max(columns, minimumViewportWidth);
 
 const truncateText = (value: string, maxLength: number): string => {
   if (maxLength <= 0) {
@@ -77,6 +84,20 @@ const metricText = <T>(metric: Metric<T>): string => {
   return String(metric.value);
 };
 
+const numberMetricValue = (metric: Metric<number>): number | null => (
+  metric.known && metric.value !== null
+    ? metric.value
+    : null
+);
+
+const booleanMetricValue = (metric: Metric<boolean>): boolean | null => (
+  metric.known && metric.value !== null
+    ? metric.value
+    : null
+);
+
+const metricUnknown = (metric: Metric<unknown>): boolean => !metric.known || metric.value === null;
+
 const toneColor = (ansi: AnsiPalette, tone: CardTone): string => {
   if (tone === "green") {
     return ansi.green;
@@ -105,9 +126,31 @@ const toneForLevel = (level: StatusLevel): CardTone => {
   return "amber";
 };
 
-const levelColorText = (ansi: AnsiPalette, level: StatusLevel): string => {
+const toneTag: Record<CardTone, string> = {
+  amber: "ATTN",
+  green: "OK",
+  neutral: "INFO",
+  red: "ALERT"
+};
+
+const levelBadge = (ansi: AnsiPalette, level: StatusLevel): string => {
   const color = toneColor(ansi, toneForLevel(level));
-  return `${color}${level}${ansi.reset}`;
+  return `${color}[${level}]${ansi.reset}`;
+};
+
+const cardTitle = (title: string, tone: CardTone): string => `${title} [${toneTag[tone]}]`;
+
+const formatTimestamp = (value: string): string => {
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value.replace("T", " ").replace("Z", " UTC");
+  }
+
+  return parsedDate
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, " UTC");
 };
 
 const buildCard = (
@@ -148,6 +191,115 @@ const mergeCardRows = (
   });
 };
 
+const securityTone = (snapshot: BoardSnapshot): CardTone => {
+  const criticalCount = numberMetricValue(snapshot.security.critical);
+  const warningCount = numberMetricValue(snapshot.security.warning);
+
+  if (criticalCount !== null && criticalCount > 0) {
+    return "red";
+  }
+
+  if (warningCount !== null && warningCount > 0) {
+    return "amber";
+  }
+
+  if ([snapshot.security.critical, snapshot.security.warning, snapshot.security.info].some(metricUnknown)) {
+    return "amber";
+  }
+
+  return "green";
+};
+
+const cronTone = (snapshot: BoardSnapshot): CardTone => {
+  const failingCount = numberMetricValue(snapshot.cron.failingOrRecentErrorCount);
+
+  if (failingCount !== null && failingCount > 0) {
+    return "red";
+  }
+
+  if ([snapshot.cron.enabledCount, snapshot.cron.failingOrRecentErrorCount].some(metricUnknown)) {
+    return "amber";
+  }
+
+  return "green";
+};
+
+const channelsTone = (snapshot: BoardSnapshot): CardTone => {
+  const configuredCount = numberMetricValue(snapshot.channels.configuredCount);
+  const connectedCount = numberMetricValue(snapshot.channels.connectedCount);
+
+  if (configuredCount === null || connectedCount === null) {
+    return "amber";
+  }
+
+  if (configuredCount === 0) {
+    return "neutral";
+  }
+
+  return connectedCount < configuredCount ? "amber" : "green";
+};
+
+const agentsTone = (snapshot: BoardSnapshot): CardTone => {
+  const configuredCount = numberMetricValue(snapshot.agents.configuredCount);
+
+  if (configuredCount === null) {
+    return "amber";
+  }
+
+  if (configuredCount === 0) {
+    return "neutral";
+  }
+
+  return "green";
+};
+
+const sessionsTone = (snapshot: BoardSnapshot): CardTone => {
+  const activeCount = numberMetricValue(snapshot.sessions.activeCount);
+
+  if (activeCount === null) {
+    return "amber";
+  }
+
+  if (activeCount === 0) {
+    return "neutral";
+  }
+
+  return "green";
+};
+
+const repoTone = (snapshot: BoardSnapshot): CardTone => {
+  const cleanState = booleanMetricValue(snapshot.repoDrift.clean);
+  const behindCount = numberMetricValue(snapshot.repoDrift.behindCount);
+
+  if (cleanState === null || behindCount === null) {
+    return "amber";
+  }
+
+  if (!cleanState || behindCount > 0) {
+    return "amber";
+  }
+
+  return "green";
+};
+
+const versionTone = (snapshot: BoardSnapshot): CardTone => {
+  const updateAvailable = booleanMetricValue(snapshot.versionDrift.updateAvailable);
+
+  if (updateAvailable === true) {
+    return "amber";
+  }
+
+  if ([
+    snapshot.versionDrift.installedVersion,
+    snapshot.versionDrift.latestVersion,
+    snapshot.versionDrift.updateAvailable
+  ].some(metricUnknown)) {
+    return "amber";
+  }
+
+  return "green";
+};
+
 const overallCardLines = (ansi: AnsiPalette, snapshot: BoardSnapshot): readonly string[] => {
   const gatewayValue = snapshot.gateway.reachable.known
     ? (snapshot.gateway.reachable.value ? "reachable" : "unreachable")
@@ -156,47 +308,47 @@ const overallCardLines = (ansi: AnsiPalette, snapshot: BoardSnapshot): readonly 
   const firstReason = snapshot.overall.reasons[0] ?? "healthy";
 
   return [
-    `Status: ${levelColorText(ansi, snapshot.overall.level)}`,
+    `Health: ${levelBadge(ansi, snapshot.overall.level)}`,
     `Gateway: ${gatewayValue}`,
     `Signal: ${firstReason}`,
-    `Updated: ${snapshot.generatedAt.replace("T", " ").replace("Z", "")}`
+    `Updated: ${formatTimestamp(snapshot.generatedAt)}`
   ];
 };
 
 const securityCardLines = (snapshot: BoardSnapshot): readonly string[] => [
-  `Critical: ${metricText(snapshot.security.critical)}`,
-  `Warning: ${metricText(snapshot.security.warning)}`,
-  `Info: ${metricText(snapshot.security.info)}`
+  `Critical findings: ${metricText(snapshot.security.critical)}`,
+  `Warning findings: ${metricText(snapshot.security.warning)}`,
+  `Info findings: ${metricText(snapshot.security.info)}`
 ];
 
 const cronCardLines = (snapshot: BoardSnapshot): readonly string[] => [
   `Enabled jobs: ${metricText(snapshot.cron.enabledCount)}`,
-  `Failing/recent errors: ${metricText(snapshot.cron.failingOrRecentErrorCount)}`,
-  "Source: openclaw cron state"
+  `Failing/recent: ${metricText(snapshot.cron.failingOrRecentErrorCount)}`,
+  "Data source: openclaw cron"
 ];
 
 const channelsCardLines = (snapshot: BoardSnapshot): readonly string[] => [
-  `Configured: ${metricText(snapshot.channels.configuredCount)}`,
-  `Connected: ${metricText(snapshot.channels.connectedCount)}`,
-  "Connected shown only when detectable"
+  `Configured channels: ${metricText(snapshot.channels.configuredCount)}`,
+  `Connected channels: ${metricText(snapshot.channels.connectedCount)}`,
+  "Connected signal may be unknown"
 ];
 
 const agentsCardLines = (snapshot: BoardSnapshot): readonly string[] => [
-  `Configured: ${metricText(snapshot.agents.configuredCount)}`,
-  "Source: openclaw agents list",
+  `Configured agents: ${metricText(snapshot.agents.configuredCount)}`,
+  "Data source: openclaw agents",
   ""
 ];
 
 const sessionsCardLines = (snapshot: BoardSnapshot): readonly string[] => [
-  `Active: ${metricText(snapshot.sessions.activeCount)}`,
-  `Window: ${snapshot.sessions.activeWindowMinutes} minutes`,
-  "Source: openclaw sessions"
+  `Active sessions: ${metricText(snapshot.sessions.activeCount)}`,
+  `Activity window: ${snapshot.sessions.activeWindowMinutes} minutes`,
+  "Data source: openclaw sessions"
 ];
 
 const repoCardLines = (snapshot: BoardSnapshot): readonly string[] => [
-  `Clean: ${metricText(snapshot.repoDrift.clean)}`,
-  `Ahead: ${metricText(snapshot.repoDrift.aheadCount)}  Behind: ${metricText(snapshot.repoDrift.behindCount)}`,
-  `Repos: ${metricText(snapshot.repoDrift.repositoryCount)}  Dirty: ${metricText(snapshot.repoDrift.dirtyCount)}`
+  `Clean repos: ${metricText(snapshot.repoDrift.clean)}`,
+  `Ahead/Behind: ${metricText(snapshot.repoDrift.aheadCount)} / ${metricText(snapshot.repoDrift.behindCount)}`,
+  `Repos/Dirty: ${metricText(snapshot.repoDrift.repositoryCount)} / ${metricText(snapshot.repoDrift.dirtyCount)}`
 ];
 
 const versionCardLines = (snapshot: BoardSnapshot): readonly string[] => [
@@ -213,14 +365,21 @@ const compactLayout = (
   const cardWidth = Math.max(width - 2, 28);
 
   return [
-    ...buildCard(ansi, "Overall Status", overallCardLines(ansi, snapshot), cardWidth, toneForLevel(snapshot.overall.level), 4),
-    ...buildCard(ansi, "Security Findings", securityCardLines(snapshot), cardWidth, "neutral", 3),
-    ...buildCard(ansi, "Cron Health", cronCardLines(snapshot), cardWidth, "neutral", 3),
-    ...buildCard(ansi, "Channels", channelsCardLines(snapshot), cardWidth, "neutral", 3),
-    ...buildCard(ansi, "Agents", agentsCardLines(snapshot), cardWidth, "neutral", 3),
-    ...buildCard(ansi, "Sessions", sessionsCardLines(snapshot), cardWidth, "neutral", 3),
-    ...buildCard(ansi, "Repo Drift", repoCardLines(snapshot), cardWidth, "neutral", 3),
-    ...buildCard(ansi, "Version Drift", versionCardLines(snapshot), cardWidth, "neutral", 3)
+    ...buildCard(
+      ansi,
+      cardTitle("Overall Status", toneForLevel(snapshot.overall.level)),
+      overallCardLines(ansi, snapshot),
+      cardWidth,
+      toneForLevel(snapshot.overall.level),
+      4
+    ),
+    ...buildCard(ansi, cardTitle("Security Findings", securityTone(snapshot)), securityCardLines(snapshot), cardWidth, securityTone(snapshot), 3),
+    ...buildCard(ansi, cardTitle("Cron Health", cronTone(snapshot)), cronCardLines(snapshot), cardWidth, cronTone(snapshot), 3),
+    ...buildCard(ansi, cardTitle("Channels", channelsTone(snapshot)), channelsCardLines(snapshot), cardWidth, channelsTone(snapshot), 3),
+    ...buildCard(ansi, cardTitle("Agents", agentsTone(snapshot)), agentsCardLines(snapshot), cardWidth, agentsTone(snapshot), 3),
+    ...buildCard(ansi, cardTitle("Sessions", sessionsTone(snapshot)), sessionsCardLines(snapshot), cardWidth, sessionsTone(snapshot), 3),
+    ...buildCard(ansi, cardTitle("Repo Drift", repoTone(snapshot)), repoCardLines(snapshot), cardWidth, repoTone(snapshot), 3),
+    ...buildCard(ansi, cardTitle("Version Drift", versionTone(snapshot)), versionCardLines(snapshot), cardWidth, versionTone(snapshot), 3)
   ];
 };
 
@@ -236,7 +395,7 @@ const wideLayout = (
 
   const header = buildCard(
     ansi,
-    "Overall Status",
+    cardTitle("Overall Status", toneForLevel(snapshot.overall.level)),
     overallCardLines(ansi, snapshot),
     effectiveWidth,
     toneForLevel(snapshot.overall.level),
@@ -244,29 +403,29 @@ const wideLayout = (
   );
 
   const rowOne = mergeCardRows(
-    buildCard(ansi, "Security Findings", securityCardLines(snapshot), columnWidth, "neutral", 3),
-    buildCard(ansi, "Cron Health", cronCardLines(snapshot), columnWidth, "neutral", 3),
+    buildCard(ansi, cardTitle("Security Findings", securityTone(snapshot)), securityCardLines(snapshot), columnWidth, securityTone(snapshot), 3),
+    buildCard(ansi, cardTitle("Cron Health", cronTone(snapshot)), cronCardLines(snapshot), columnWidth, cronTone(snapshot), 3),
     gap
   );
 
   const rowTwo = mergeCardRows(
-    buildCard(ansi, "Channels", channelsCardLines(snapshot), columnWidth, "neutral", 3),
-    buildCard(ansi, "Agents", agentsCardLines(snapshot), columnWidth, "neutral", 3),
+    buildCard(ansi, cardTitle("Channels", channelsTone(snapshot)), channelsCardLines(snapshot), columnWidth, channelsTone(snapshot), 3),
+    buildCard(ansi, cardTitle("Agents", agentsTone(snapshot)), agentsCardLines(snapshot), columnWidth, agentsTone(snapshot), 3),
     gap
   );
 
   const rowThree = mergeCardRows(
-    buildCard(ansi, "Sessions", sessionsCardLines(snapshot), columnWidth, "neutral", 3),
-    buildCard(ansi, "Repo Drift", repoCardLines(snapshot), columnWidth, "neutral", 3),
+    buildCard(ansi, cardTitle("Sessions", sessionsTone(snapshot)), sessionsCardLines(snapshot), columnWidth, sessionsTone(snapshot), 3),
+    buildCard(ansi, cardTitle("Repo Drift", repoTone(snapshot)), repoCardLines(snapshot), columnWidth, repoTone(snapshot), 3),
     gap
   );
 
   const footer = buildCard(
     ansi,
-    "Version Drift",
+    cardTitle("Version Drift", versionTone(snapshot)),
     versionCardLines(snapshot),
     effectiveWidth,
-    "neutral",
+    versionTone(snapshot),
     3
   );
 
@@ -299,7 +458,7 @@ const warningTone = (warnings: readonly BoardWarning[]): CardTone => {
 
 const warningSummaryLine = (ansi: AnsiPalette, warnings: readonly BoardWarning[]): string => {
   if (warnings.length === 0) {
-    return `${ansi.dim}warnings(0): none${ansi.reset}`;
+    return `${ansi.dim}Advisories: none${ansi.reset}`;
   }
 
   const visibleWarnings = warnings.slice(0, 2);
@@ -310,7 +469,69 @@ const warningSummaryLine = (ansi: AnsiPalette, warnings: readonly BoardWarning[]
   const overflowText = overflowCount > 0 ? ` (+${overflowCount} more)` : "";
   const color = toneColor(ansi, warningTone(warnings));
 
-  return `${ansi.dim}warnings(${warnings.length}): ${color}${visibleText}${overflowText}${ansi.reset}`;
+  return `${ansi.dim}Advisories(${warnings.length}): ${color}${visibleText}${overflowText}${ansi.reset}`;
+};
+
+const boardHeaderLines = (
+  ansi: AnsiPalette,
+  snapshot: BoardSnapshot,
+  columns: number
+): readonly string[] => {
+  const viewportWidth = normalizeColumns(columns);
+  const title = `${ansi.brand}CLAWTOP${ansi.reset} ${ansi.dim}OpenClaw health board${ansi.reset}`;
+  const summary = [
+    `Overall ${levelBadge(ansi, snapshot.overall.level)}`,
+    `Warnings ${snapshot.warnings.length}`,
+    `Updated ${formatTimestamp(snapshot.generatedAt)}`
+  ].join("  ·  ");
+
+  return [
+    truncateText(title, viewportWidth),
+    truncateText(`${ansi.dim}${summary}${ansi.reset}`, viewportWidth)
+  ];
+};
+
+const stateCard = (
+  ansi: AnsiPalette,
+  columns: number,
+  title: string,
+  lines: readonly string[],
+  tone: CardTone
+): string => {
+  const width = Math.max(normalizeColumns(columns) - 2, 38);
+  return buildCard(ansi, cardTitle(title, tone), lines, width, tone, 4).join("\n");
+};
+
+export const renderLoadingState = (options: RenderOptions): string => {
+  const ansi = createAnsiPalette(options.colorEnabled);
+  const viewportWidth = normalizeColumns(options.columns);
+  const title = truncateText(`${ansi.brand}CLAWTOP${ansi.reset} ${ansi.dim}OpenClaw health board${ansi.reset}`, viewportWidth);
+  const subtitle = truncateText(`${ansi.dim}Starting dashboard refresh loop...${ansi.reset}`, viewportWidth);
+  const loadingCard = stateCard(ansi, viewportWidth, "Starting clawtop", [
+    "Collecting OpenClaw metrics...",
+    "Preparing dashboard layout...",
+    "First snapshot will appear automatically."
+  ], "neutral");
+
+  return [title, subtitle, "", loadingCard].join("\n");
+};
+
+export const renderErrorState = (
+  message: string,
+  options: RenderOptions
+): string => {
+  const ansi = createAnsiPalette(options.colorEnabled);
+  const viewportWidth = normalizeColumns(options.columns);
+  const title = truncateText(`${ansi.brand}CLAWTOP${ansi.reset} ${ansi.dim}OpenClaw health board${ansi.reset}`, viewportWidth);
+  const subtitle = truncateText(`${ansi.red}Snapshot refresh failed${ansi.reset}`, viewportWidth);
+  const errorCard = stateCard(ansi, viewportWidth, "Refresh Error", [
+    "Snapshot collection failed.",
+    `Reason: ${message}`,
+    "Check openclaw CLI access and command compatibility.",
+    "Retry with: clawtop --once --json"
+  ], "red");
+
+  return [title, subtitle, "", errorCard].join("\n");
 };
 
 export const renderBoard = (
@@ -318,14 +539,16 @@ export const renderBoard = (
   options: RenderOptions
 ): string => {
   const ansi = createAnsiPalette(options.colorEnabled);
-  const compact = options.compact || options.columns < 100;
+  const viewportWidth = normalizeColumns(options.columns);
+  const compact = options.compact || viewportWidth < 100;
   const frameLines = compact
-    ? compactLayout(ansi, snapshot, options.columns)
-    : wideLayout(ansi, snapshot, options.columns);
+    ? compactLayout(ansi, snapshot, viewportWidth)
+    : wideLayout(ansi, snapshot, viewportWidth);
 
   return [
-    `${ansi.dim}clawtop · OpenClaw health board${ansi.reset}`,
-    warningSummaryLine(ansi, snapshot.warnings),
+    ...boardHeaderLines(ansi, snapshot, viewportWidth),
+    truncateText(warningSummaryLine(ansi, snapshot.warnings), viewportWidth),
+    "",
     ...frameLines
   ].join("\n");
 };
