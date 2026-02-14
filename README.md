@@ -14,6 +14,7 @@ No keybindings, no drill-downs, no editing actions.
 - Auto-refresh every 10 seconds by default
 - `--once` mode for one-shot snapshots
 - `--json` mode for machine-readable snapshots
+- Polished startup + refresh error screens
 - Partial-failure tolerant collector model (`unknown` instead of crash)
 - Linux-first config/state path discovery (XDG + `~/.openclaw` fallback)
 - Non-TTY-safe output (no ANSI/control escape pollution by default)
@@ -108,6 +109,20 @@ node dist/cli.js --help
 Environment behavior:
 
 - `NO_COLOR=1` disables colors unless `--color always` is set.
+
+## Screenshot-ready setup
+
+For clean shareable screenshots:
+
+1. Use a wide terminal window (`132x38` is a good default for the two-column board).
+2. Use a legible coding font with clear box-drawing glyphs (`Iosevka Term`, `JetBrains Mono`, or `Fira Code`).
+3. Pick a high-contrast theme with muted background + bright status colors.
+4. Render a stable frame with:
+   - `clawtop --once --color always`
+5. For narrow screenshots, force single-column:
+   - `clawtop --once --compact --color always`
+6. For monochrome docs, disable color:
+   - `NO_COLOR=1 clawtop --once`
 
 ## v1 Cards
 
