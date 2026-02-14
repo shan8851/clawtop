@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 import { collectBoardSnapshot } from "./status.js";
-import { renderBoard } from "./render.js";
+import {
+  renderBoard,
+  renderErrorState,
+  renderLoadingState
+} from "./render.js";
+import type { RenderOptions } from "./render.js";
 
 type ColorMode = "auto" | "always" | "never";
 
@@ -37,6 +42,8 @@ const usageText = (): string => [
   "  clawtop --once",
   "  clawtop --refresh 5",
   "  clawtop --active-window 120",
+  "  clawtop --once --color always",
+  "  clawtop --compact --color always",
   "  clawtop --color never",
   "  clawtop --json"
 ].join("\n");
@@ -175,16 +182,18 @@ const resolveColorEnabled = (colorMode: ColorMode, stdoutIsTty: boolean): boolea
   return stdoutIsTty;
 };
 
+const resolveRenderOptions = (options: CliOptions): RenderOptions => ({
+  colorEnabled: resolveColorEnabled(options.colorMode, process.stdout.isTTY === true),
+  columns: process.stdout.columns ?? 80,
+  compact: options.compact
+});
+
 const renderCurrentSnapshot = async (options: CliOptions): Promise<string> => {
   const snapshot = await collectBoardSnapshot({
     activeSessionWindowMinutes: options.activeWindowMinutes
   });
 
-  return renderBoard(snapshot, {
-    colorEnabled: resolveColorEnabled(options.colorMode, process.stdout.isTTY === true),
-    columns: process.stdout.columns ?? 80,
-    compact: options.compact
-  });
+  return renderBoard(snapshot, resolveRenderOptions(options));
 };
 
 const runOnce = async (options: CliOptions): Promise<void> => {
@@ -197,11 +206,7 @@ const runOnce = async (options: CliOptions): Promise<void> => {
     return;
   }
 
-  writeLine(renderBoard(snapshot, {
-    colorEnabled: resolveColorEnabled(options.colorMode, process.stdout.isTTY === true),
-    columns: process.stdout.columns ?? 80,
-    compact: options.compact
-  }));
+  writeLine(renderBoard(snapshot, resolveRenderOptions(options)));
 };
 
 const enterAlternateScreen = (): void => {
@@ -230,6 +235,8 @@ const runRefreshLoop = async (options: CliOptions): Promise<void> => {
     enterAlternateScreen();
   }
 
+  drawFrame(renderLoadingState(resolveRenderOptions(options)), terminalControlsEnabled);
+
   let renderInFlight = false;
 
   const renderFrame = async (): Promise<void> => {
@@ -244,7 +251,7 @@ const runRefreshLoop = async (options: CliOptions): Promise<void> => {
       drawFrame(frame, terminalControlsEnabled);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "snapshot collection failed";
-      drawFrame(`clawtop render error: ${message}`, terminalControlsEnabled);
+      drawFrame(renderErrorState(message, resolveRenderOptions(options)), terminalControlsEnabled);
     } finally {
       renderInFlight = false;
     }
